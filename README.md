@@ -1,4 +1,4 @@
-# When Does Deep Fusion Help? Multi-omics Integration for Breast Cancer Subtyping
+l# When Does Deep Fusion Help? Multi-omics Integration for Breast Cancer Subtyping
 
 **Status: work in progress.** The data pipeline, all baselines, the deep models and the main results below are complete and reproducible. Interpretation analyses (modality ablation, latent space) are in progress; see [Next steps](#next-steps).
 
@@ -156,4 +156,4 @@ Total runtime is a few minutes on a recent GPU (the methylation file takes the l
 
 ## Author
 
-Hicham Attioui, bioinformatics engineer. GitHub: [HICHAM-CODES](https://github.com/HICHAM-CODES)
+Hicham Attioui, bioinformatics engineer. GitHub: [HICHAM-CODES](https://github.com/hicham-attioui)
