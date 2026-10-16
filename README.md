@@ -156,4 +156,4 @@ Total runtime is a few minutes on a recent GPU (the methylation file takes the l
 
 ## Author
 
-Hicham Attioui, bioinformatics engineer. GitHub: [HICHAM-CODES](https://github.com/hicham-attioui)
+Hicham Attioui, bioinformatics engineer. GitHub: [hicham-attioui](https://github.com/hicham-attioui)
