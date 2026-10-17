@@ -1,19 +1,4 @@
-"""
-Figures and results table for the README.
-
-Reads only saved results, so it runs in seconds and can be rerun whenever results change.
-
-Output (in figures/ and results/):
-    fig1_data_overview.png/.pdf   patient flow and class counts
-    fig2_model_comparison.png/.pdf macro-F1 of every model, one dot per split
-    fig3_confusion_fusion.png/.pdf confusion matrix of the fusion model with unlabelled patients
-    results/results_table.csv and .md  mean +/- std, and paired wins vs the best baseline
-
-Run from the repository root:
-    python scripts/06_make_figures.py
-"""
 from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -27,7 +12,6 @@ CLASSES = ["LumA", "LumB", "Basal", "Her2"]
 SUBTYPE_COLORS = {"LumA": "#2a78d6", "LumB": "#1baf7a", "Basal": "#e34948", "Her2": "#eda100",
                   "Unlabelled": "#b4b2a9"}
 
-# Display names and model families (one colour per family)
 MODELS = {
     "expr": ("LR expression", "Classical"),
     "mirna": ("LR miRNA", "Classical"),
@@ -42,12 +26,13 @@ MODELS = {
     "mlp_meth": ("MLP methylation", "Deep, single omics"),
     "fusion": ("Fusion autoencoder", "Deep, intermediate fusion"),
     "fusion_semi": ("Fusion autoencoder + unlabelled", "Deep, intermediate fusion"),
+    "fusion_2stage": ("Fusion AE, two-stage", "Deep, intermediate fusion"),
+    "fusion_2stage_semi": ("Fusion AE, two-stage + unlabelled", "Deep, intermediate fusion"),
 }
 FAMILY_COLORS = {"Classical": "#5f5e5a", "Deep, single omics": "#2a78d6",
                  "Deep, intermediate fusion": "#eb6834"}
-REFERENCE = "expr"   # best baseline: every model is compared with it
+REFERENCE = "expr"   
 
-# Patient counts from the inspection notebook and 02_build_dataset.py output
 FLOW = [("Expression, primary tumours", 1097), ("Methylation, primary tumours", 785),
         ("miRNA, primary tumours", 749), ("All three omics", 617)]
 
@@ -111,15 +96,19 @@ def results_table(metrics):
     (RES / "results_table.md").write_text(table.to_markdown(index=False), encoding="utf-8")
     print(table.to_string(index=False))
 
-    # Second question of the project: do the unlabelled patients help the fusion model?
-    if {"fusion", "fusion_semi"} <= set(wide.columns):
-        d = wide["fusion_semi"] - wide["fusion"]
-        print(f"\nFusion + unlabelled vs fusion: mean diff {d.mean():+.3f}, wins {(d > 0).sum()}/{len(d)}")
+    pairs = [("fusion_semi", "fusion"), ("fusion_2stage_semi", "fusion_2stage"),
+             ("fusion_2stage", "fusion"), ("fusion_2stage_semi", "fusion_semi")]
+    print()
+    for a, b in pairs:
+        if {a, b} <= set(wide.columns):
+            d = wide[a] - wide[b]
+            print(f"{MODELS[a][0]} vs {MODELS[b][0]}: mean diff {d.mean():+.3f}, "
+                  f"wins {(d > 0).sum()}/{len(d)}")
 
 
 def fig2_model_comparison(metrics):
     stats = metrics.groupby("model")["macro_f1"].agg(["mean", "std"])
-    order = [m for m in stats.sort_values("mean").index if m in MODELS]   # best at the top
+    order = [m for m in stats.sort_values("mean").index if m in MODELS]   
     rng = np.random.default_rng(0)
 
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -162,12 +151,79 @@ def fig3_confusion(model="fusion_semi"):
     save(fig, "fig3_confusion_fusion")
 
 
+def fig4_learning_curves():
+    """Training and validation losses of the fusion models.
+    Faint lines: validation loss in every split. Bold lines: one representative split (seed 0, fold 0)."""
+    path = RES / "fusion_history.csv"
+    if not path.exists():
+        print("fusion_history.csv not found: rerun 05_run_fusion.py to get learning curves")
+        return
+    h = pd.read_csv(path)
+    if "stage" in h.columns:
+        h = h[h["stage"] == "joint"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+    for ax, m in zip(axes, ["fusion", "fusion_semi"]):
+        hm = h[h["model"] == m]
+        for _, split in hm.groupby(["seed", "fold"]):
+            ax.plot(split["epoch"], split["val_clf"], color="#eb6834", alpha=0.15, lw=0.8)
+        rep = hm[(hm["seed"] == 0) & (hm["fold"] == 0)]
+        ax.plot(rep["epoch"], rep["train_clf"], color="#2a78d6", lw=2, label="train classification loss")
+        ax.plot(rep["epoch"], rep["val_clf"], color="#eb6834", lw=2, label="validation classification loss")
+        ax.plot(rep["epoch"], rep["train_rec"], color="#5f5e5a", lw=1.5, ls="--",
+                label="train reconstruction loss")
+        best = rep.loc[rep["val_clf"].idxmin(), "epoch"]
+        ax.axvline(best, color="#888780", lw=1, ls=":")
+        ax.text(best, ax.get_ylim()[1] * 0.95, " best epoch", fontsize=8, color="#888780")
+        ax.set_title(MODELS[m][0], fontsize=11)
+        ax.set_xlabel("epoch")
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].set_ylabel("loss")
+    axes[0].legend(fontsize=8, frameon=False)
+    fig.suptitle("Learning curves (bold: seed 0, fold 0; faint: validation loss in all 15 splits)",
+                 fontsize=10)
+    save(fig, "fig4_learning_curves")
+
+
+def fig5_two_stage_curves(model="fusion_2stage_semi"):
+    """Two-stage training, seed 0 fold 0: pretraining (reconstruction) then fine-tuning (classification)."""
+    path = RES / "fusion_history.csv"
+    if not path.exists():
+        return
+    h = pd.read_csv(path)
+    if "stage" not in h.columns or model not in h["model"].values:
+        return
+    rep = h[(h["model"] == model) & (h["seed"] == 0) & (h["fold"] == 0)]
+    pre, ft = rep[rep["stage"] == "pretrain"], rep[rep["stage"] == "finetune"]
+
+    fig, (a, b) = plt.subplots(1, 2, figsize=(11, 4))
+    a.plot(pre["epoch"], pre["train_rec"], color="#5f5e5a", lw=2, label="train reconstruction loss")
+    a.plot(pre["epoch"], pre["val_rec"], color="#eb6834", lw=2, label="validation reconstruction loss")
+    a.set_title("Stage 1: pretraining (reconstruction only)", fontsize=11)
+
+    b.plot(ft["epoch"], ft["train_clf"], color="#2a78d6", lw=2, label="train classification loss")
+    b.plot(ft["epoch"], ft["val_clf"], color="#eb6834", lw=2, label="validation classification loss")
+    b.plot(ft["epoch"], ft["train_rec"], color="#5f5e5a", lw=1.5, ls="--", label="train reconstruction loss")
+    b.axvline(ft.loc[ft["val_clf"].idxmin(), "epoch"], color="#888780", lw=1, ls=":")
+    b.set_title("Stage 2: fine-tuning (classification)", fontsize=11)
+
+    for ax in (a, b):
+        ax.set_xlabel("epoch")
+        ax.set_ylabel("loss")
+        ax.legend(fontsize=8, frameon=False)
+        ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle(f"{MODELS[model][0]}, seed 0, fold 0", fontsize=10)
+    save(fig, "fig5_two_stage_curves")
+
+
 def main():
     fig1_data_overview()
     metrics = load_metrics()
     results_table(metrics)
     fig2_model_comparison(metrics)
     fig3_confusion()
+    fig4_learning_curves()
+    fig5_two_stage_curves()
 
 
 if __name__ == "__main__":

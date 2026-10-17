@@ -1,23 +1,6 @@
-"""
-Deep single-omics models: one small MLP per omics, PAM50 subtype classification.
-
-Same evaluation as the baselines: the 15 train/test splits saved in results/splits.csv.
-Inside each split:
-    - 20% of the training side is held out as validation (early stopping, weight decay choice)
-    - preprocessing (top-variance features, median imputation, scaling) is fitted on train only
-    - the test fold is used once, for the final score
-
-Input : data/processed/*.pkl, labels.csv, results/splits.csv
-Output: results/mlp_metrics.csv, results/mlp_summary.csv
-
-Run from the repository root:
-    python scripts/04_run_mlp.py           # full run (3 seeds x 5 folds)
-    python scripts/04_run_mlp.py --quick   # seed 0 only, to test the code
-"""
 import argparse
 import time
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import torch
@@ -25,29 +8,25 @@ import torch.nn as nn
 from sklearn.metrics import balanced_accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
 
-# ---------------------------------------------------------------------------
 # Settings
-# ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]
 PROC, RES = ROOT / "data" / "processed", ROOT / "results"
 
 CLASSES = ["LumA", "LumB", "Basal", "Her2"]
 OMICS = ["expr", "mirna", "meth"]
-TOP_K = {"expr": 2000, "mirna": 521, "meth": 5000}   # same as the baselines
+TOP_K = {"expr": 2000, "mirna": 521, "meth": 5000}   
 N_FOLDS = 5
 
 HIDDEN = 256
 DROPOUT = 0.5
 LR = 1e-3
-WEIGHT_DECAYS = [1e-3, 1e-2, 1e-1]   # chosen per split on the validation set
+WEIGHT_DECAYS = [1e-3, 1e-2, 1e-1]   
 MAX_EPOCHS, PATIENCE = 2000, 100
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-# ---------------------------------------------------------------------------
 # Data
-# ---------------------------------------------------------------------------
 def load_labelled():
     labels = pd.read_csv(PROC / "labels.csv")
     mask = labels["labelled"].values
@@ -75,7 +54,7 @@ class Preprocessor:
         self.median_ = np.nanmedian(Xk, axis=0)
         Xk = np.where(np.isnan(Xk), self.median_, Xk)
         self.mean_ = Xk.mean(axis=0)
-        self.std_ = Xk.std(axis=0) + 1e-8          # avoid division by zero
+        self.std_ = Xk.std(axis=0) + 1e-8          
         return self
 
     def transform(self, X):
@@ -84,20 +63,18 @@ class Preprocessor:
         return ((Xk - self.mean_) / self.std_).astype("float32")
 
 
-# ---------------------------------------------------------------------------
 # Model
-# ---------------------------------------------------------------------------
 class MLP(nn.Module):
     """Input -> hidden layer (ReLU, dropout) -> 4 class scores."""
 
     def __init__(self, n_in, n_hidden=HIDDEN, n_out=len(CLASSES), dropout=DROPOUT):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Dropout(0.2),              # light dropout on the inputs too: thousands of noisy features
+            nn.Dropout(0.2),              
             nn.Linear(n_in, n_hidden),
-            nn.ReLU(),                    # the non-linearity: what makes this more than logistic regression
+            nn.ReLU(),                    
             nn.Dropout(dropout),
-            nn.Linear(n_hidden, n_out),   # raw scores (logits), no softmax
+            nn.Linear(n_hidden, n_out),   
         )
 
     def forward(self, x):
@@ -108,7 +85,6 @@ def train_one(Xtr, ytr, Xva, yva, weight_decay, seed):
     """Train with early stopping on validation loss. Returns the best model and its validation loss."""
     torch.manual_seed(seed)
     model = MLP(Xtr.shape[1]).to(device)
-    # AdamW: weight decay applied directly to the weights (decoupled), not through Adam's rescaling
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=weight_decay)
     loss_fn = nn.CrossEntropyLoss()
 
@@ -139,9 +115,8 @@ def tensor(a, dtype=torch.float32):
     return torch.tensor(a, dtype=dtype, device=device)
 
 
-# ---------------------------------------------------------------------------
+
 # Main
-# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -159,7 +134,6 @@ def main():
                 test = splits[f"fold_seed{seed}"].values == fold
                 idx_trval = np.where(~test)[0]
 
-                # validation = 20% of the training side, stratified; the test fold is never touched
                 idx_tr, idx_va = train_test_split(
                     idx_trval, test_size=0.2, stratify=y[idx_trval], random_state=seed
                 )
@@ -168,7 +142,6 @@ def main():
                 Xtr, Xva, Xte = (tensor(prep.transform(X[i])) for i in (idx_tr, idx_va, test))
                 ytr, yva = tensor(y[idx_tr], torch.long), tensor(y[idx_va], torch.long)
 
-                # choose weight decay on the validation set
                 best = None
                 for wd in WEIGHT_DECAYS:
                     model, val_loss = train_one(Xtr, ytr, Xva, yva, wd, seed)

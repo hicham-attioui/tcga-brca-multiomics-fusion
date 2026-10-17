@@ -1,22 +1,7 @@
-"""
-Build the processed multi-omics dataset for TCGA-BRCA.
-
-Input : raw UCSC Xena files in data/raw/ and the PAM50 gene list in data/pam50_genes.txt
-Output: data/processed/expr.pkl, mirna.pkl, meth.pkl (samples x features)
-        data/processed/labels.csv (sample_id, pam50_original, pam50, labelled)
-
-Run from the repository root:
-    python scripts/02_build_dataset.py
-"""
 from pathlib import Path
-
 import pandas as pd
 
-# ---------------------------------------------------------------------------
 # Paths and settings
-# ---------------------------------------------------------------------------
-# parents[1] = the folder above scripts/, i.e. the repository root.
-# This makes the script work no matter where you run it from.
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
 OUT = ROOT / "data" / "processed"
@@ -30,14 +15,12 @@ FILES = {
 PAM50_FILE = ROOT / "data" / "pam50_genes.txt"
 
 LABEL_COL = "PAM50Call_RNAseq"
-KEEP_CLASSES = ["LumA", "LumB", "Basal", "Her2"]  # Normal-like excluded on purpose
-METH_MAX_MISSING = 0.05   # drop probes missing in >= 5% of samples
-MIRNA_MAX_MISSING = 0.20  # drop miRNAs missing in >= 20% of samples
+KEEP_CLASSES = ["LumA", "LumB", "Basal", "Her2"]  
+METH_MAX_MISSING = 0.05   
+MIRNA_MAX_MISSING = 0.20  
 
 
-# ---------------------------------------------------------------------------
 # Loading
-# ---------------------------------------------------------------------------
 def load_pam50_genes(path):
     """Read the PAM50 gene list. Lines starting with # are comments (use one for the source)."""
     lines = path.read_text().splitlines()
@@ -58,11 +41,7 @@ def keep_primary_tumours(df):
     return df.loc[is_tumour]
 
 
-# ---------------------------------------------------------------------------
-# Quality control (fixed rules, no labels used)
-# ---------------------------------------------------------------------------
-# Data is now samples x features, so axis=0 means "down each column" = per feature.
-
+# Quality control 
 def qc_expression(expr, pam50_genes):
     """Drop genes that are zero in every sample, then drop the PAM50 genes."""
     expr = expr.loc[:, (expr != 0).any(axis=0)]
@@ -86,13 +65,11 @@ def qc_methylation(meth):
     return meth.loc[:, missing < METH_MAX_MISSING]
 
 
-# ---------------------------------------------------------------------------
 # Labels
-# ---------------------------------------------------------------------------
 def build_labels(clin, samples):
     """One row per sample, in the same order as the omics matrices."""
-    original = clin[LABEL_COL].reindex(samples)            # NaN if sample not in clinical file
-    pam50 = original.where(original.isin(KEEP_CLASSES))     # Normal and missing -> NaN
+    original = clin[LABEL_COL].reindex(samples)            
+    pam50 = original.where(original.isin(KEEP_CLASSES))     
     labels = pd.DataFrame({
         "sample_id": samples,
         "pam50_original": original.values,
@@ -102,13 +79,10 @@ def build_labels(clin, samples):
     return labels
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
 
-    # Read the small gene list first: if it is wrong, fail now, not after 5 minutes of loading.
     pam50_genes = load_pam50_genes(PAM50_FILE)
 
     print("Loading expression...")
@@ -120,7 +94,6 @@ def main():
     print("Loading clinical...")
     clin = pd.read_csv(FILES["clin"], sep="\t", index_col=0, low_memory=False)
 
-    # Patients present in all three omics, in one fixed order
     common = expr.index.intersection(mirna.index).intersection(meth.index).sort_values()
     expr, mirna, meth = expr.loc[common], mirna.loc[common], meth.loc[common]
 
@@ -131,7 +104,6 @@ def main():
 
     labels = build_labels(clin, common)
 
-    # Safety checks: same samples, same order, no duplicates, no unexpected NaNs
     assert expr.index.is_unique
     assert expr.index.equals(mirna.index) and expr.index.equals(meth.index)
     assert (labels["sample_id"].values == expr.index.values).all()

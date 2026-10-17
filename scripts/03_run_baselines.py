@@ -1,34 +1,7 @@
-"""
-Classical baselines for PAM50 subtype classification (TCGA-BRCA).
-
-Two classifiers, each on
-    - expression only
-    - miRNA only
-    - methylation only
-    - all three omics concatenated (early fusion)
-
-    L2 logistic regression (linear)      -> model names: expr, mirna, meth, concat
-    Random forest (non-linear, not deep) -> model names: rf_expr, rf_mirna, rf_meth, rf_concat
-
-Evaluation: stratified 5-fold CV, repeated with 3 seeds (15 train/test splits).
-All preprocessing that learns from data (feature selection, imputation, scaling)
-is fitted on the training side of each split only. The logistic regression
-chooses its regularization with an inner CV inside the training side.
-
-Input : data/processed/{expr,mirna,meth}.pkl and labels.csv
-Output: results/splits.csv            (fold of each patient, reused by the deep models)
-        results/baselines_metrics.csv (one row per model per split)
-        results/baselines_summary.csv (mean and std per model)
-
-Run from the repository root:
-    python scripts/03_run_baselines.py           # full run
-    python scripts/03_run_baselines.py --quick   # 1 seed, small grid, to test the code
-"""
 import argparse
 import time
 import warnings
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -42,9 +15,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-# ---------------------------------------------------------------------------
 # Paths and settings
-# ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]
 PROC = ROOT / "data" / "processed"
 RES = ROOT / "results"
@@ -57,9 +28,7 @@ N_FOLDS = 5
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 
-# ---------------------------------------------------------------------------
 # A small custom preprocessing step: keep the k most variable features
-# ---------------------------------------------------------------------------
 class TopVariance(BaseEstimator, TransformerMixin):
     """Keep the k features with the highest variance, computed in fit() only.
 
@@ -80,9 +49,7 @@ class TopVariance(BaseEstimator, TransformerMixin):
         return X[:, self.keep_]
 
 
-# ---------------------------------------------------------------------------
 # Data
-# ---------------------------------------------------------------------------
 def load_labelled_data():
     """Return omics matrices (numpy, labelled patients only), labels y (0..3) and sample IDs."""
     labels = pd.read_csv(PROC / "labels.csv")
@@ -111,15 +78,13 @@ def make_splits(y, ids, seeds):
     return splits
 
 
-# ---------------------------------------------------------------------------
 # Models
-# ---------------------------------------------------------------------------
 def omics_preprocessing(k):
     """Per-omics steps, all fitted on training data only."""
     return Pipeline([
         ("top_var", TopVariance(k)),
-        ("impute", SimpleImputer(strategy="median")),  # only methylation has NaNs, harmless for others
-        ("scale", StandardScaler()),                   # needed for LR; harmless for the random forest
+        ("impute", SimpleImputer(strategy="median")), 
+        ("scale", StandardScaler()),                   
     ])
 
 
@@ -127,9 +92,9 @@ def make_logreg(seed, quick):
     """L2-regularized logistic regression. The inner CV picks C from the training data."""
     return LogisticRegressionCV(
         Cs=np.logspace(-4, 1, 4 if quick else 8),
-        l1_ratios=(0,),                              # 0 = pure L2 (ridge)
+        l1_ratios=(0,),                              
         solver="lbfgs",
-        cv=StratifiedKFold(n_splits=3, shuffle=True, random_state=seed),  # inner CV
+        cv=StratifiedKFold(n_splits=3, shuffle=True, random_state=seed),  
         scoring="f1_macro",
         max_iter=2000,
         n_jobs=-1,
@@ -141,8 +106,8 @@ def make_logreg(seed, quick):
 def make_rf(seed, quick):
     """Random forest with standard, fixed settings (robust defaults, no tuning)."""
     return RandomForestClassifier(
-        n_estimators=200 if quick else 500,   # number of trees
-        max_features="sqrt",                  # features tried at each split: sqrt(n_features)
+        n_estimators=200 if quick else 500,   
+        max_features="sqrt",                  
         n_jobs=-1,
         random_state=seed,
     )
@@ -152,7 +117,7 @@ def build_model(name, clf_type, seed, quick, n_features):
     """Single-omics model, or concatenated model with separate preprocessing per omics."""
     if name in OMICS:
         prep = omics_preprocessing(TOP_K[name])
-    else:  # "concat": each omics block gets its own branch, then everything is joined
+    else:  
         branches, start = [], 0
         for omics in OMICS:
             end = start + n_features[omics]
@@ -163,9 +128,7 @@ def build_model(name, clf_type, seed, quick, n_features):
     return Pipeline([("prep", prep), ("clf", clf)])
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true", help="1 seed and a small grid, to test the code")
