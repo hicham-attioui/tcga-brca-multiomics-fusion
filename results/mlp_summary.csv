@@ -1,0 +1,6 @@
+,macro_f1,macro_f1,balanced_acc,balanced_acc
+,mean,std,mean,std
+model,,,,
+mlp_expr,0.84,0.06,0.845,0.063
+mlp_meth,0.716,0.075,0.717,0.077
+mlp_mirna,0.759,0.064,0.751,0.052

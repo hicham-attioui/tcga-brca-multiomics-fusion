@@ -1,3 +1,29 @@
+"""
+Classical baselines for PAM50 subtype classification (TCGA-BRCA).
+
+Two classifiers, each on
+    - expression only
+    - miRNA only
+    - methylation only
+    - all three omics concatenated (early fusion)
+
+    L2 logistic regression (linear)      -> model names: expr, mirna, meth, concat
+    Random forest (non-linear, not deep) -> model names: rf_expr, rf_mirna, rf_meth, rf_concat
+
+Evaluation: stratified 5-fold CV, repeated with 3 seeds (15 train/test splits).
+All preprocessing that learns from data (feature selection, imputation, scaling)
+is fitted on the training side of each split only. The logistic regression
+chooses its regularization with an inner CV inside the training side.
+
+Input : data/processed/{expr,mirna,meth}.pkl and labels.csv
+Output: results/splits.csv            (fold of each patient, reused by the deep models)
+        results/baselines_metrics.csv (one row per model per split)
+        results/baselines_summary.csv (mean and std per model)
+
+Run from the repository root:
+    python scripts/03_run_baselines.py           # full run
+    python scripts/03_run_baselines.py --quick   # 1 seed, small grid, to test the code
+"""
 import argparse
 import time
 import warnings
@@ -7,6 +33,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegressionCV
@@ -27,9 +54,6 @@ OMICS = ["expr", "mirna", "meth"]
 TOP_K = {"expr": 2000, "mirna": 521, "meth": 5000}  # features kept per omics (chosen on train only)
 N_FOLDS = 5
 
-# saga sometimes stops before full convergence on this kind of data. The warnings are
-# very frequent and not informative here, so we hide them. If results look strange,
-# remove this line and check them.
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 
@@ -47,9 +71,9 @@ class TopVariance(BaseEstimator, TransformerMixin):
         self.k = k
 
     def fit(self, X, y=None):
-        variances = np.nanvar(X, axis=0)            # nanvar ignores missing values
+        variances = np.nanvar(X, axis=0)
         k = min(self.k, X.shape[1])
-        self.keep_ = np.argsort(variances)[::-1][:k]  # indices of the k largest variances
+        self.keep_ = np.argsort(variances)[::-1][:k]
         return self
 
     def transform(self, X):
@@ -95,14 +119,14 @@ def omics_preprocessing(k):
     return Pipeline([
         ("top_var", TopVariance(k)),
         ("impute", SimpleImputer(strategy="median")),  # only methylation has NaNs, harmless for others
-        ("scale", StandardScaler()),
+        ("scale", StandardScaler()),                   # needed for LR; harmless for the random forest
     ])
 
 
-def make_classifier(seed, quick):
+def make_logreg(seed, quick):
     """L2-regularized logistic regression. The inner CV picks C from the training data."""
     return LogisticRegressionCV(
-        Cs=np.logspace(-4, 1, 4 if quick else 8),   # regularization strengths to try
+        Cs=np.logspace(-4, 1, 4 if quick else 8),
         l1_ratios=(0,),                              # 0 = pure L2 (ridge)
         solver="lbfgs",
         cv=StratifiedKFold(n_splits=3, shuffle=True, random_state=seed),  # inner CV
@@ -114,18 +138,29 @@ def make_classifier(seed, quick):
     )
 
 
-def build_model(name, seed, quick, n_features):
+def make_rf(seed, quick):
+    """Random forest with standard, fixed settings (robust defaults, no tuning)."""
+    return RandomForestClassifier(
+        n_estimators=200 if quick else 500,   # number of trees
+        max_features="sqrt",                  # features tried at each split: sqrt(n_features)
+        n_jobs=-1,
+        random_state=seed,
+    )
+
+
+def build_model(name, clf_type, seed, quick, n_features):
     """Single-omics model, or concatenated model with separate preprocessing per omics."""
     if name in OMICS:
         prep = omics_preprocessing(TOP_K[name])
-    else:  # "concat": columns of each omics get their own branch, then everything is joined
+    else:  # "concat": each omics block gets its own branch, then everything is joined
         branches, start = [], 0
         for omics in OMICS:
             end = start + n_features[omics]
             branches.append((omics, omics_preprocessing(TOP_K[omics]), slice(start, end)))
             start = end
         prep = ColumnTransformer(branches)
-    return Pipeline([("prep", prep), ("clf", make_classifier(seed, quick))])
+    clf = make_logreg(seed, quick) if clf_type == "lr" else make_rf(seed, quick)
+    return Pipeline([("prep", prep), ("clf", clf)])
 
 
 # ---------------------------------------------------------------------------
@@ -146,31 +181,32 @@ def main():
     if not args.quick:
         splits.to_csv(RES / "splits.csv", index=False)
 
-    # The concatenated matrix: omics side by side, same patient order
     inputs = dict(data)
     inputs["concat"] = np.hstack([data[o] for o in OMICS])
 
     rows = []
-    for model_name in OMICS + ["concat"]:
-        X = inputs[model_name]
-        t0 = time.time()
-        for seed in seeds:
-            for fold in range(N_FOLDS):
-                test = splits[f"fold_seed{seed}"].values == fold
-                train = ~test
+    for clf_type in ["lr", "rf"]:
+        for name in OMICS + ["concat"]:
+            model_name = name if clf_type == "lr" else f"rf_{name}"
+            X = inputs[name]
+            t0 = time.time()
+            for seed in seeds:
+                for fold in range(N_FOLDS):
+                    test = splits[f"fold_seed{seed}"].values == fold
+                    train = ~test
 
-                model = build_model(model_name, seed, args.quick, n_features)
-                model.fit(X[train], y[train])
-                pred = model.predict(X[test])
+                    model = build_model(name, clf_type, seed, args.quick, n_features)
+                    model.fit(X[train], y[train])
+                    pred = model.predict(X[test])
 
-                clf = model.named_steps["clf"]
-                rows.append({
-                    "model": model_name, "seed": seed, "fold": fold,
-                    "macro_f1": f1_score(y[test], pred, average="macro"),
-                    "balanced_acc": balanced_accuracy_score(y[test], pred),
-                    "C": float(clf.C_[0]), 
-                })
-        print(f"{model_name:7s} done in {time.time() - t0:.0f} s")
+                    clf = model.named_steps["clf"]
+                    rows.append({
+                        "model": model_name, "seed": seed, "fold": fold,
+                        "macro_f1": f1_score(y[test], pred, average="macro"),
+                        "balanced_acc": balanced_accuracy_score(y[test], pred),
+                        "C": float(clf.C_[0]) if clf_type == "lr" else np.nan,
+                    })
+            print(f"{model_name:10s} done in {time.time() - t0:.0f} s")
 
     metrics = pd.DataFrame(rows)
     summary = metrics.groupby("model")[["macro_f1", "balanced_acc"]].agg(["mean", "std"]).round(3)
