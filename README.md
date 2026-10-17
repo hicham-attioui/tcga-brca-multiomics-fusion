@@ -1,4 +1,4 @@
-l# When Does Deep Fusion Help? Multi-omics Integration for Breast Cancer Subtyping
+# When Does Deep Fusion Help? Multi-omics Integration for Breast Cancer Subtyping
 
 **Status: work in progress.** The data pipeline, all baselines, the deep models and the main results below are complete and reproducible. Interpretation analyses (modality ablation, latent space) are in progress; see [Next steps](#next-steps).
 
