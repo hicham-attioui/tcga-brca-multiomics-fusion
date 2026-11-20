@@ -1,0 +1,4 @@
+dimension,omics,n_features,spearman,top_overlap,top_n
+z23,expr,2000,0.9635201063800266,40,50
+z23,mirna,521,0.9657385392642523,45,50
+z23,meth,5000,0.9674452322978092,44,50
