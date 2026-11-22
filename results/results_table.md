@@ -15,3 +15,5 @@
 | Fusion autoencoder + unlabelled   | 0.808 ± 0.057 | 0.801 ± 0.063       | -0.047                   | 5/15                          |
 | Fusion AE, two-stage              | 0.795 ± 0.057 | 0.795 ± 0.063       | -0.060                   | 1/15                          |
 | Fusion AE, two-stage + unlabelled | 0.799 ± 0.049 | 0.798 ± 0.056       | -0.056                   | 2/15                          |
+| Shared-latent AE + LR             | 0.801 ± 0.073 | 0.792 ± 0.074       | -0.054                   | 3/15                          |
+| Multi-omics VAE + LR              | 0.799 ± 0.059 | 0.790 ± 0.070       | -0.056                   | 2/15                          |

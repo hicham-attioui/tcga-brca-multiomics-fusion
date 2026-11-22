@@ -1,4 +1,5 @@
 from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -12,6 +13,7 @@ CLASSES = ["LumA", "LumB", "Basal", "Her2"]
 SUBTYPE_COLORS = {"LumA": "#2a78d6", "LumB": "#1baf7a", "Basal": "#e34948", "Her2": "#eda100",
                   "Unlabelled": "#b4b2a9"}
 
+# Display names and model families (one colour per family)
 MODELS = {
     "expr": ("LR expression", "Classical"),
     "mirna": ("LR miRNA", "Classical"),
@@ -28,11 +30,14 @@ MODELS = {
     "fusion_semi": ("Fusion autoencoder + unlabelled", "Deep, intermediate fusion"),
     "fusion_2stage": ("Fusion AE, two-stage", "Deep, intermediate fusion"),
     "fusion_2stage_semi": ("Fusion AE, two-stage + unlabelled", "Deep, intermediate fusion"),
+    "ae_lr": ("Shared-latent AE + LR", "Deep, shared latent + LR"),
+    "vae_lr": ("Multi-omics VAE + LR", "Deep, shared latent + LR"),
 }
 FAMILY_COLORS = {"Classical": "#5f5e5a", "Deep, single omics": "#2a78d6",
-                 "Deep, intermediate fusion": "#eb6834"}
+                 "Deep, intermediate fusion": "#eb6834", "Deep, shared latent + LR": "#7b5ea7"}
 REFERENCE = "expr"   
 
+# Patient counts 
 FLOW = [("Expression, primary tumours", 1097), ("Methylation, primary tumours", 785),
         ("miRNA, primary tumours", 749), ("All three omics", 617)]
 
@@ -74,7 +79,7 @@ def fig1_data_overview():
 
 
 def load_metrics():
-    files = ["baselines_metrics.csv", "mlp_metrics.csv", "fusion_metrics.csv"]
+    files = ["baselines_metrics.csv", "mlp_metrics.csv", "fusion_metrics.csv", "vae_metrics.csv"]
     return pd.concat([pd.read_csv(RES / f) for f in files if (RES / f).exists()])
 
 
@@ -96,8 +101,10 @@ def results_table(metrics):
     (RES / "results_table.md").write_text(table.to_markdown(index=False), encoding="utf-8")
     print(table.to_string(index=False))
 
+    # Paired comparisons between fusion versions 
     pairs = [("fusion_semi", "fusion"), ("fusion_2stage_semi", "fusion_2stage"),
-             ("fusion_2stage", "fusion"), ("fusion_2stage_semi", "fusion_semi")]
+             ("fusion_2stage", "fusion"), ("fusion_2stage_semi", "fusion_semi"),
+             ("vae_lr", "ae_lr"), ("vae_lr", "fusion_2stage_semi")]
     print()
     for a, b in pairs:
         if {a, b} <= set(wide.columns):
@@ -108,10 +115,10 @@ def results_table(metrics):
 
 def fig2_model_comparison(metrics):
     stats = metrics.groupby("model")["macro_f1"].agg(["mean", "std"])
-    order = [m for m in stats.sort_values("mean").index if m in MODELS]   
+    order = [m for m in stats.sort_values("mean").index if m in MODELS]   # best at the top
     rng = np.random.default_rng(0)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8, 5.6))
     for i, m in enumerate(order):
         color = FAMILY_COLORS[MODELS[m][1]]
         vals = metrics.loc[metrics["model"] == m, "macro_f1"].values
